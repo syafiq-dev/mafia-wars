@@ -57,6 +57,21 @@ function button(scene: Phaser.Scene, x: number, y: number, w: number, label: str
 
 const isTouch = (scene: Phaser.Scene) => scene.sys.game.device.input.touch;
 
+/** The screen grows to fill the phone (Scale.EXPAND); keep the 854x480 menu art centred in it. */
+function centre(scene: Phaser.Scene) {
+  const f = () => scene.cameras.main.centerOn(W / 2, H / 2);
+  f();
+  scene.scale.on('resize', f);
+  scene.events.once('shutdown', () => scene.scale.off('resize', f));
+}
+
+/** Android Chrome: tapping Start goes fullscreen and locks landscape. iPhone Safari has no fullscreen API, so it just plays. */
+function goFullscreen(scene: Phaser.Scene) {
+  if (!isTouch(scene) || scene.scale.isFullscreen) return;
+  scene.scale.startFullscreen();
+  (screen.orientation as ScreenOrientation & { lock?: (o: string) => Promise<void> }).lock?.('landscape').catch(() => { /* not supported */ });
+}
+
 class Boot extends Phaser.Scene {
   constructor() { super('boot'); }
 
@@ -88,6 +103,7 @@ class Menu extends Phaser.Scene {
 
   create() {
     const touch = isTouch(this);
+    centre(this);
     this.add.image(W / 2, H / 2, 'menu');
     this.add.rectangle(608, 323, 432, 205, 0x000000, 150 / 255);
     text(this, 400, 230, 'CONTROLS', 24);
@@ -101,6 +117,7 @@ class Menu extends Phaser.Scene {
 
     if (!this.sound.get('menumusic')?.isPlaying) this.sound.play('menumusic', { loop: true });
     const go = () => {
+      goFullscreen(this);
       this.sound.stopByKey('menumusic');
       this.sound.play('select', { volume: db(5) });
       this.scene.start('game');
@@ -194,21 +211,30 @@ class Game extends Phaser.Scene {
 
   private touchControls() {
     this.input.addPointer(3); // steer, pedal and shoot at the same time
-    const pad = (x: number, y: number, label: string, key: keyof Keys) => {
-      const c = this.add.circle(x, y, 36, 0xffffff, 0.25).setStrokeStyle(2, 0xffffff, 0.6).setScrollFactor(0).setDepth(30);
-      text(this, x, y, label, 26).setOrigin(0.5).setAlpha(0.8).setScrollFactor(0).setDepth(31);
-      c.setInteractive().on('pointerdown', (p: Phaser.Input.Pointer) => { this.touchKeys[key] = p.id; });
+    // x < 0 counts from the right edge, y < 0 from the bottom, so buttons stay in the corners on any screen width.
+    const placed: [Phaser.GameObjects.Arc | Phaser.GameObjects.Text, number, number][] = [];
+    const button = (x: number, y: number, r: number, label: string, onDown: (p: Phaser.Input.Pointer) => void) => {
+      const c = this.add.circle(0, 0, r, 0xffffff, 0.25).setStrokeStyle(2, 0xffffff, 0.6).setScrollFactor(0).setDepth(30);
+      const t = text(this, 0, 0, label, r * 0.7).setOrigin(0.5).setAlpha(0.8).setScrollFactor(0).setDepth(31);
+      c.setInteractive().on('pointerdown', onDown);
+      placed.push([c, x, y], [t, x, y]);
     };
-    pad(55, 420, '◀', 'left');
-    pad(145, 420, '▶', 'right');
-    pad(795, 360, '▲', 'up');
-    pad(795, 440, '▼', 'down');
+    const pad = (x: number, y: number, label: string, key: keyof Keys) => button(x, y, 36, label, (p) => { this.touchKeys[key] = p.id; });
+    pad(55, -60, '◀', 'left');
+    pad(145, -60, '▶', 'right');
+    pad(-59, -120, '▲', 'up');
+    pad(-59, -40, '▼', 'down');
+    button(-34, 34, 22, 'II', () => this.togglePause());
+    const layout = () => {
+      const { width, height } = this.scale;
+      for (const [o, x, y] of placed) o.setPosition(x < 0 ? width + x : x, y < 0 ? height + y : y);
+    };
+    layout();
+    this.scale.on('resize', layout);
+    this.events.once('shutdown', () => this.scale.off('resize', layout));
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
       for (const k in this.touchKeys) if (this.touchKeys[k as keyof Keys] === p.id) this.touchKeys[k as keyof Keys] = -1;
     });
-    const pause = this.add.circle(820, 34, 22, 0xffffff, 0.25).setStrokeStyle(2, 0xffffff, 0.6).setScrollFactor(0).setDepth(30);
-    text(this, 820, 34, 'II', 18).setOrigin(0.5).setScrollFactor(0).setDepth(31);
-    pause.setInteractive().on('pointerdown', () => this.togglePause());
   }
 
   private spawn(list: Thing[], x: number, y: number, key: string, w: number, h: number, angle: number, data: object) {
@@ -292,8 +318,8 @@ class Game extends Phaser.Scene {
       this.anims.pauseAll();
       this.sfx('menuopen');
       this.pauseUi = [
-        this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 150 / 255).setScrollFactor(0).setDepth(25),
-        text(this, W / 2, H / 2, 'Paused', 32).setOrigin(0.5).setScrollFactor(0).setDepth(26),
+        this.add.rectangle(0, 0, 4000, 4000, 0x000000, 150 / 255).setScrollFactor(0).setDepth(25),
+        text(this, this.scale.width / 2, this.scale.height / 2, 'Paused', 32).setOrigin(0.5).setScrollFactor(0).setDepth(26),
       ];
     } else {
       this.anims.resumeAll();
@@ -456,12 +482,14 @@ class Game extends Phaser.Scene {
     const best = bestScore(this.score, readBest());
     writeBest(best);
     const ui = (o: Phaser.GameObjects.Text | Phaser.GameObjects.Rectangle) => o.setScrollFactor(0).setDepth(26);
-    ui(this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 150 / 255).setDepth(25));
-    ui(text(this, W / 2, 180, 'Game Over', 48).setOrigin(0.5));
-    ui(text(this, W / 2, 240, `Score : ${this.score}     Best : ${best}`, 20, { color: '#e9ffe9' }).setOrigin(0.5));
-    ui(text(this, W / 2, 285, isTouch(this) ? 'Tap to Retry' : 'Press [R] or click to Retry', 18).setOrigin(0.5));
-    const rankText = ui(text(this, W / 2, 320, '', 16, { color: '#ffd84a' }).setOrigin(0.5)) as Phaser.GameObjects.Text;
-    button(this, W / 2, 380, 110, 'MENU', '#ffffff', () => { this.sound.stopAll(); this.scene.start('menu'); })
+    const cx = this.scale.width / 2;
+    const dy = (this.scale.height - H) / 2;
+    ui(this.add.rectangle(0, 0, 4000, 4000, 0x000000, 150 / 255).setDepth(25));
+    ui(text(this, cx, dy + 180, 'Game Over', 48).setOrigin(0.5));
+    ui(text(this, cx, dy + 240, `Score : ${this.score}     Best : ${best}`, 20, { color: '#e9ffe9' }).setOrigin(0.5));
+    ui(text(this, cx, dy + 285, isTouch(this) ? 'Tap to Retry' : 'Press [R] or click to Retry', 18).setOrigin(0.5));
+    const rankText = ui(text(this, cx, dy + 320, '', 16, { color: '#ffd84a' }).setOrigin(0.5)) as Phaser.GameObjects.Text;
+    button(this, cx, dy + 380, 110, 'MENU', '#ffffff', () => { this.sound.stopAll(); this.scene.start('menu'); })
       .forEach((o) => (o as Phaser.GameObjects.Rectangle).setScrollFactor(0).setDepth(27));
 
     if (this.score > readSent()) {
@@ -481,8 +509,9 @@ class Leaderboard extends Phaser.Scene {
   constructor() { super('leaderboard'); }
 
   create() {
+    centre(this);
     this.add.image(W / 2, H / 2, 'menu');
-    this.add.rectangle(W / 2, H / 2, W, H, 0x000000, 0.7);
+    this.add.rectangle(W / 2, H / 2, 4000, 4000, 0x000000, 0.7);
     text(this, W / 2, 40, 'TOP 10', 34).setOrigin(0.5);
     const status = text(this, W / 2, 220, 'Loading...', 18).setOrigin(0.5);
 
@@ -514,6 +543,6 @@ new Phaser.Game({
   width: W,
   height: H,
   backgroundColor: '#000000',
-  scale: { mode: Phaser.Scale.FIT, autoCenter: Phaser.Scale.CENTER_BOTH },
+  scale: { mode: Phaser.Scale.EXPAND, autoCenter: Phaser.Scale.CENTER_BOTH },
   scene: [Boot, Menu, Game, Leaderboard],
 });
