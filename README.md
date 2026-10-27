@@ -4,7 +4,8 @@ Remake of my Construct 2 game in Phaser 3 + TypeScript + Vite. Same art, sounds 
 
 Drive with WASD or the arrow keys, aim with the mouse, click to shoot. P pauses, R retries.
 Mafia cars ram you, red convertibles have a gunner, thugs on foot punch you. Hearts heal.
-On phones and tablets, on-screen buttons appear: steer on the left, gas and brake on the right, tap anywhere else to shoot there.
+Now and then a tank rolls in: 20 hits to destroy, fires shells, worth 25 points.
+On phones and tablets, a joystick appears bottom-left: push it the way you want to drive. Tap anywhere else to shoot there (one shot at a time).
 
 ## Run it
 

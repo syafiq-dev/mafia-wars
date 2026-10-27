@@ -35,6 +35,13 @@ export function stepCar(c: Car, k: Keys, dt: number): Car {
   };
 }
 
+/** Touch joystick: drive forward and steer the car towards where the stick points. */
+export function stickKeys(carAngle: number, stickAngle: number, strength: number): Keys {
+  if (strength < 0.2) return { up: false, down: false, left: false, right: false }; // dead zone
+  const diff = wrap180(stickAngle - carAngle);
+  return { up: true, down: false, left: diff < -8, right: diff > 8 };
+}
+
 /** Width of the red health bar (220px when full). */
 export const barWidth = (hp: number) => Math.max(0, hp) * 220 / MAX_HP;
 

@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { stepCar, barWidth, heal, bestScore, CAR, WORLD_W } from './logic.ts';
+import { stepCar, stickKeys, barWidth, heal, bestScore, CAR, WORLD_W } from './logic.ts';
 
 const idle = { up: false, down: false, left: false, right: false };
 const car = { x: 100, y: 100, angle: 0, moveAngle: 0, speed: 0 };
@@ -42,4 +42,12 @@ test('best score handles empty or junk storage', () => {
   assert.equal(bestScore(5, null), 5);
   assert.equal(bestScore(5, 'abc'), 5);
   assert.equal(bestScore(30, '12'), 30);
+});
+
+test('joystick steers towards the stick and drives forward', () => {
+  assert.deepEqual(stickKeys(0, 90, 1), { up: true, down: false, left: false, right: true });
+  assert.deepEqual(stickKeys(0, -90, 1), { up: true, down: false, left: true, right: false });
+  assert.deepEqual(stickKeys(350, 5, 1), { up: true, down: false, left: false, right: true }); // across 0/360
+  assert.deepEqual(stickKeys(0, 3, 1), { up: true, down: false, left: false, right: false });
+  assert.equal(stickKeys(0, 90, 0.1).up, false);
 });

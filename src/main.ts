@@ -1,5 +1,5 @@
 import * as Phaser from 'phaser';
-import { WORLD_W, WORLD_H, MAX_HP, stepCar, barWidth, heal, bestScore, type Car, type Keys } from './logic.ts';
+import { WORLD_W, WORLD_H, MAX_HP, stepCar, stickKeys, barWidth, heal, bestScore, type Car, type Keys } from './logic.ts';
 
 const W = 854;
 const H = 480;
@@ -94,6 +94,16 @@ class Boot extends Phaser.Scene {
     anim('blood', 10, 0);
     anim('heart', 10, -1);
     anim('heal', 8, -1);
+
+    // The tank isn't in the original art, so it's drawn here: hull and turret, facing right like the other sprites.
+    const g = this.add.graphics();
+    g.fillStyle(0x2b2b2b).fillRect(0, 0, 100, 16).fillRect(0, 48, 100, 16);
+    g.fillStyle(0x4b5320).fillRect(6, 12, 88, 40);
+    g.fillStyle(0x5d6b2a).fillRect(80, 16, 12, 32);
+    g.generateTexture('tank', 100, 64).clear();
+    g.fillStyle(0x3a4119).fillRect(20, 11, 50, 8);
+    g.fillStyle(0x5d6b2a).fillCircle(20, 15, 15);
+    g.generateTexture('tank-turret', 70, 30).destroy();
     this.scene.start('menu');
   }
 }
@@ -111,7 +121,7 @@ class Menu extends Phaser.Scene {
     this.add.rectangle(605, 324, 3, 194, 0xffffff);
     this.add.image(461, 315, 'arrows').setDisplaySize(113, 34);
     text(this, 403, 344, touch ? 'TAP - AIM & SHOOT' : 'LEFT CLICK - SHOOT', 18);
-    text(this, 403, 376, touch ? 'BUTTONS - DRIVE' : 'MOUSE - AIM', 18);
+    text(this, 403, 376, touch ? 'JOYSTICK - DRIVE' : 'MOUSE - AIM', 18);
     ['Survive and Eliminate', 'as many Mafias as', 'possible.'].forEach((s, i) => text(this, 614, 271 + i * 26, s, 18));
     text(this, 598, 200, `BEST : ${bestScore(0, readBest())}`, 16, { color: '#ffffff' }).setOrigin(0.5, 0);
 
@@ -145,7 +155,7 @@ class Game extends Phaser.Scene {
   private things: Record<'bullets' | 'metal' | 'enemies' | 'stallions' | 'guys' | 'hearts', Thing[]> =
     { bullets: [], metal: [], enemies: [], stallions: [], guys: [], hearts: [] };
   private keys!: Record<'W' | 'A' | 'S' | 'D' | 'UP' | 'LEFT' | 'DOWN' | 'RIGHT', Phaser.Input.Keyboard.Key>;
-  private touchKeys: Record<keyof Keys, number> = { up: -1, down: -1, left: -1, right: -1 }; // pointer id holding each button
+  private stick = { id: -1, angle: 0, strength: 0 }; // touch joystick: pointer id holding it, direction in degrees, 0..1
   private scoreText!: Phaser.GameObjects.Text;
   private bar!: Phaser.GameObjects.Rectangle;
   private healFx!: Phaser.GameObjects.Sprite;
@@ -161,7 +171,7 @@ class Game extends Phaser.Scene {
     this.paused = this.over = false;
     this.time.paused = false;
     for (const k in this.things) this.things[k as keyof typeof this.things] = [];
-    this.touchKeys = { up: -1, down: -1, left: -1, right: -1 };
+    this.stick = { id: -1, angle: 0, strength: 0 };
 
     this.add.tileSprite(0, 0, WORLD_W, WORLD_H, 'tile').setOrigin(0);
     this.car = { x: 387, y: 347, angle: 0, moveAngle: 0, speed: 0 };
@@ -182,6 +192,9 @@ class Game extends Phaser.Scene {
     every(15000, () => this.spawnHeart(Phaser.Math.Between(0, WORLD_W), rnd()));
     every(3000, () => this.spawnGuy(1400, rnd()));
     every(1000, () => this.punch());
+    every(20000, () => { // rare boss: at most one tank, about one in three tries
+      if (!this.things.stallions.some((s) => s.getData('tank')) && Math.random() < 0.35) this.spawnTank(1400, rnd());
+    });
 
     this.hud();
     this.keys = this.input.keyboard!.addKeys('W,A,S,D,UP,LEFT,DOWN,RIGHT') as typeof this.keys;
@@ -214,30 +227,40 @@ class Game extends Phaser.Scene {
   }
 
   private touchControls() {
-    this.input.addPointer(3); // steer, pedal and shoot at the same time
-    // x < 0 counts from the right edge, y < 0 from the bottom, so buttons stay in the corners on any screen width.
-    const placed: [Phaser.GameObjects.Arc | Phaser.GameObjects.Text, number, number][] = [];
-    const button = (x: number, y: number, r: number, label: string, onDown: (p: Phaser.Input.Pointer) => void) => {
-      const c = this.add.circle(0, 0, r, 0xffffff, 0.25).setStrokeStyle(2, 0xffffff, 0.6).setScrollFactor(0).setDepth(30);
-      const t = text(this, 0, 0, label, r * 0.7).setOrigin(0.5).setAlpha(0.8).setScrollFactor(0).setDepth(31);
-      c.setInteractive().on('pointerdown', onDown);
-      placed.push([c, x, y], [t, x, y]);
-    };
-    const pad = (x: number, y: number, label: string, key: keyof Keys) => button(x, y, 36, label, (p) => { this.touchKeys[key] = p.id; });
-    pad(55, -60, '◀', 'left');
-    pad(145, -60, '▶', 'right');
-    pad(-59, -120, '▲', 'up');
-    pad(-59, -40, '▼', 'down');
-    button(-34, 34, 22, 'II', () => this.togglePause());
-    const layout = () => {
+    this.input.addPointer(3); // drive and shoot at the same time
+    const R = 60;
+    const base = this.add.circle(0, 0, R, 0xffffff, 0.2).setStrokeStyle(2, 0xffffff, 0.5).setScrollFactor(0).setDepth(30);
+    const knob = this.add.circle(0, 0, 28, 0xffffff, 0.5).setScrollFactor(0).setDepth(31);
+    const pause = this.add.circle(0, 0, 22, 0xffffff, 0.25).setStrokeStyle(2, 0xffffff, 0.6).setScrollFactor(0).setDepth(30);
+    const pauseText = text(this, 0, 0, 'II', 15).setOrigin(0.5).setAlpha(0.8).setScrollFactor(0).setDepth(31);
+    const layout = () => { // stay in the corners on any screen width
       const { width, height } = this.scale;
-      for (const [o, x, y] of placed) o.setPosition(x < 0 ? width + x : x, y < 0 ? height + y : y);
+      base.setPosition(100, height - 100);
+      knob.setPosition(base.x, base.y);
+      pause.setPosition(width - 34, 34);
+      pauseText.setPosition(pause.x, pause.y);
     };
     layout();
     this.scale.on('resize', layout);
     this.events.once('shutdown', () => this.scale.off('resize', layout));
+    pause.setInteractive().on('pointerdown', () => this.togglePause());
+
+    const drag = (p: Phaser.Input.Pointer) => {
+      if (p.id !== this.stick.id) return;
+      const a = Phaser.Math.Angle.Between(base.x, base.y, p.x, p.y);
+      const d = Math.min(R, Phaser.Math.Distance.Between(base.x, base.y, p.x, p.y));
+      knob.setPosition(base.x + Math.cos(a) * d, base.y + Math.sin(a) * d);
+      this.stick.angle = Phaser.Math.RadToDeg(a);
+      this.stick.strength = d / R;
+    };
+    // Bigger touch area than the drawn circle, so a thumb landing a bit off still grabs the stick.
+    base.setInteractive(new Phaser.Geom.Circle(R, R, R * 1.6), Phaser.Geom.Circle.Contains)
+      .on('pointerdown', (p: Phaser.Input.Pointer) => { this.stick.id = p.id; drag(p); });
+    this.input.on('pointermove', drag);
     this.input.on('pointerup', (p: Phaser.Input.Pointer) => {
-      for (const k in this.touchKeys) if (this.touchKeys[k as keyof Keys] === p.id) this.touchKeys[k as keyof Keys] = -1;
+      if (p.id !== this.stick.id) return;
+      this.stick = { id: -1, angle: 0, strength: 0 };
+      knob.setPosition(base.x, base.y);
     });
   }
 
@@ -254,6 +277,16 @@ class Game extends Phaser.Scene {
   private spawnStallion(x: number, y: number, angle: number) {
     const s = this.spawn(this.things.stallions, x, y, 'stallion', 87, 41, angle, { hp: 1, speed: 120, reload: 1.5 }).setOrigin(0.3, 0.5);
     s.setData('gun', this.add.image(x, y, 'handgun').setOrigin(0.15, 0.2).setDisplaySize(23, 8).setDepth(2.5));
+  }
+
+  private spawnTank(x: number, y: number) {
+    const t = this.spawn(this.things.stallions, x, y, 'tank', 100, 64, 0,
+      { hp: 20, speed: 50, reload: 2, rate: 2, tank: true, ram: 0, hit: 2, points: 25, shell: 1 });
+    t.setData('gun', this.add.image(x, y, 'tank-turret').setOrigin(0.29, 0.5).setDepth(2.5));
+    t.setData('bar', this.add.rectangle(x, y, 60, 5, 0xdd214c).setOrigin(0, 0.5).setDepth(2.6));
+    const warn = text(this, this.scale.width / 2, 140, 'TANK INCOMING!', 30, { color: '#ffd84a' }).setOrigin(0.5).setScrollFactor(0).setDepth(22);
+    this.tweens.add({ targets: warn, alpha: 0, delay: 1500, duration: 800, onComplete: () => warn.destroy() });
+    this.sfx('menuopen');
   }
 
   private spawnGuy(x: number, y: number) {
@@ -341,12 +374,12 @@ class Game extends Phaser.Scene {
     if (this.paused || this.over) return;
     const dt = Math.min(deltaMs, 100) / 1000; // a backgrounded tab must not teleport everything
     const k = this.keys;
-    const t = this.touchKeys;
+    const t = stickKeys(this.car.angle, this.stick.angle, this.stick.strength);
     this.car = stepCar(this.car, {
-      up: k.W.isDown || k.UP.isDown || t.up >= 0,
-      down: k.S.isDown || k.DOWN.isDown || t.down >= 0,
-      left: k.A.isDown || k.LEFT.isDown || t.left >= 0,
-      right: k.D.isDown || k.RIGHT.isDown || t.right >= 0,
+      up: k.W.isDown || k.UP.isDown || t.up,
+      down: k.S.isDown || k.DOWN.isDown,
+      left: k.A.isDown || k.LEFT.isDown || t.left,
+      right: k.D.isDown || k.RIGHT.isDown || t.right,
     }, dt);
     this.player.setPosition(this.car.x, this.car.y).setAngle(this.car.angle);
     this.gun.setPosition(this.car.x, this.car.y);
@@ -380,25 +413,31 @@ class Game extends Phaser.Scene {
       }
     }
 
+    // Stallions (red cars with a gunner) and the tank share this loop; the tank's data overrides the defaults.
     for (const s of stallions) {
-      if (outside(s)) this.faceCar(s);
+      const tank = s.getData('tank');
+      if (tank) s.rotation = Phaser.Math.Angle.RotateTo(s.rotation, Phaser.Math.Angle.Between(s.x, s.y, this.car.x, this.car.y), dt); // slowly turns to chase you
+      else if (outside(s)) this.faceCar(s);
       move(s);
       const gun = s.getData('gun') as Phaser.GameObjects.Image;
       gun.setPosition(s.x, s.y);
+      s.getData('bar')?.setPosition(s.x - 30, s.y - 48).setSize(60 * s.getData('hp') / 20, 5);
       if (this.dist(s) < 500) {
         gun.setRotation(Phaser.Math.Angle.Between(s.x, s.y, this.car.x, this.car.y));
         s.data.values.reload -= dt;
         if (s.getData('reload') <= 0) {
-          s.setData('reload', 1.5);
-          this.spawn(metal, gun.x + Math.cos(gun.rotation) * 20, gun.y + Math.sin(gun.rotation) * 20, 'metalbullet', 17, 4, gun.angle, { speed: 500 }).setDepth(5);
-          this.sfx('shoot', -22);
+          s.setData('reload', s.getData('rate') ?? 1.5);
+          const len = tank ? 50 : 20;
+          this.spawn(metal, gun.x + Math.cos(gun.rotation) * len, gun.y + Math.sin(gun.rotation) * len, 'metalbullet', tank ? 26 : 17, tank ? 8 : 4, gun.angle,
+            { speed: tank ? 350 : 500, dmg: s.getData('shell') ?? 0.2 }).setDepth(5);
+          this.sfx(tank ? 'explode' : 'shoot', -22);
         }
       }
-      if (bump(s, 45)) {
+      if (bump(s, tank ? 60 : 45)) {
         this.car.speed = 0;
         this.shake();
-        s.data.values.hp -= 3;
-        this.hurt(1);
+        s.data.values.hp -= s.getData('ram') ?? 3;
+        this.hurt(s.getData('hit') ?? 1);
       }
     }
 
@@ -439,15 +478,17 @@ class Game extends Phaser.Scene {
     for (const m of metal) {
       move(m);
       if (outside(m)) m.destroy();
-      else if (near(m, 30)) { this.boom(m.x, m.y); m.destroy(); this.hurt(0.2); }
+      else if (near(m, 30)) { this.boom(m.x, m.y); m.destroy(); this.hurt(m.getData('dmg')); }
     }
 
     for (const e of [...enemies, ...stallions]) {
       if (e.getData('hp') > 0) continue;
       this.boom(e.x, e.y);
       e.getData('gun')?.destroy();
+      e.getData('bar')?.destroy();
+      if (e.getData('tank')) for (let i = 0; i < 3; i++) this.time.delayedCall(i * 150, () => this.boom(e.x + Phaser.Math.Between(-40, 40), e.y + Phaser.Math.Between(-30, 30)));
+      this.score += e.getData('points') ?? 5; // before destroy(), which clears the data
       e.destroy();
-      this.score += 5;
       this.sfx('explode');
     }
 
