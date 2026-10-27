@@ -139,6 +139,7 @@ class Game extends Phaser.Scene {
   private hp = MAX_HP;
   private score = 0;
   private deadGuys = 0;
+  private lastShot = 0;
   private paused = false;
   private over = false;
   private things: Record<'bullets' | 'metal' | 'enemies' | 'stallions' | 'guys' | 'hearts', Thing[]> =
@@ -156,6 +157,7 @@ class Game extends Phaser.Scene {
     this.hp = MAX_HP;
     this.score = 0;
     this.deadGuys = 0;
+    this.lastShot = -Infinity;
     this.paused = this.over = false;
     this.time.paused = false;
     for (const k in this.things) this.things[k as keyof typeof this.things] = [];
@@ -189,6 +191,8 @@ class Game extends Phaser.Scene {
     this.input.on('pointerdown', (p: Phaser.Input.Pointer, over: unknown[]) => {
       if (over.length) return; // a button was pressed, not the map
       if (this.over) return this.retry();
+      if (this.time.now - this.lastShot < 250) return; // one shot at a time, even when several fingers tap together
+      this.lastShot = this.time.now;
       this.aim(p);
       this.shoot();
     });
