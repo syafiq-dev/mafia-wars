@@ -97,12 +97,12 @@ class Boot extends Phaser.Scene {
 
     // The tank isn't in the original art, so it's drawn here: hull and turret, facing right like the other sprites.
     const g = this.add.graphics();
-    g.fillStyle(0x2b2b2b).fillRect(0, 0, 100, 16).fillRect(0, 48, 100, 16);
-    g.fillStyle(0x4b5320).fillRect(6, 12, 88, 40);
-    g.fillStyle(0x5d6b2a).fillRect(80, 16, 12, 32);
+    g.fillStyle(0x1e1e1e).fillRect(0, 0, 100, 16).fillRect(0, 48, 100, 16);
+    g.fillStyle(0x3a3a3a).fillRect(6, 12, 88, 40);
+    g.fillStyle(0x4a4a4a).fillRect(80, 16, 12, 32);
     g.generateTexture('tank', 100, 64).clear();
-    g.fillStyle(0x3a4119).fillRect(20, 11, 50, 8);
-    g.fillStyle(0x5d6b2a).fillCircle(20, 15, 15);
+    g.fillStyle(0x2a2a2a).fillRect(20, 11, 50, 8);
+    g.fillStyle(0x4a4a4a).fillCircle(20, 15, 15);
     g.generateTexture('tank-turret', 70, 30).destroy();
     this.scene.start('menu');
   }
@@ -280,9 +280,9 @@ class Game extends Phaser.Scene {
   }
 
   private spawnTank(x: number, y: number) {
-    const t = this.spawn(this.things.stallions, x, y, 'tank', 100, 64, 0,
-      { hp: 20, speed: 50, reload: 2, rate: 2, tank: true, ram: 0, hit: 2, points: 25, shell: 1 });
-    t.setData('gun', this.add.image(x, y, 'tank-turret').setOrigin(0.29, 0.5).setDepth(2.5));
+    const t = this.spawn(this.things.stallions, x, y, 'tank', 160, 102, 0,
+      { hp: 40, speed: 50, reload: 2, rate: 2, tank: true, ram: 0, hit: 2, points: 25, shell: 1 });
+    t.setData('gun', this.add.image(x, y, 'tank-turret').setOrigin(0.29, 0.5).setScale(1.6).setDepth(2.5));
     t.setData('bar', this.add.rectangle(x, y, 60, 5, 0xdd214c).setOrigin(0, 0.5).setDepth(2.6));
     const warn = text(this, this.scale.width / 2, 140, 'TANK INCOMING!', 30, { color: '#ffd84a' }).setOrigin(0.5).setScrollFactor(0).setDepth(22);
     this.tweens.add({ targets: warn, alpha: 0, delay: 1500, duration: 800, onComplete: () => warn.destroy() });
@@ -421,19 +421,19 @@ class Game extends Phaser.Scene {
       move(s);
       const gun = s.getData('gun') as Phaser.GameObjects.Image;
       gun.setPosition(s.x, s.y);
-      s.getData('bar')?.setPosition(s.x - 30, s.y - 48).setSize(60 * s.getData('hp') / 20, 5);
+      s.getData('bar')?.setPosition(s.x - 40, s.y - 75).setSize(80 * s.getData('hp') / 40, 6);
       if (this.dist(s) < 500) {
         gun.setRotation(Phaser.Math.Angle.Between(s.x, s.y, this.car.x, this.car.y));
         s.data.values.reload -= dt;
         if (s.getData('reload') <= 0) {
           s.setData('reload', s.getData('rate') ?? 1.5);
-          const len = tank ? 50 : 20;
+          const len = tank ? 80 : 20;
           this.spawn(metal, gun.x + Math.cos(gun.rotation) * len, gun.y + Math.sin(gun.rotation) * len, 'metalbullet', tank ? 26 : 17, tank ? 8 : 4, gun.angle,
             { speed: tank ? 350 : 500, dmg: s.getData('shell') ?? 0.2 }).setDepth(5);
           this.sfx(tank ? 'explode' : 'shoot', -22);
         }
       }
-      if (bump(s, tank ? 60 : 45)) {
+      if (bump(s, tank ? 85 : 45)) {
         this.car.speed = 0;
         this.shake();
         s.data.values.hp -= s.getData('ram') ?? 3;
@@ -467,7 +467,7 @@ class Game extends Phaser.Scene {
     for (const b of bullets) {
       move(b);
       if (outside(b)) { b.destroy(); continue; }
-      const target = [...enemies, ...stallions].find((e) => Phaser.Math.Distance.Between(b.x, b.y, e.x, e.y) < 40)
+      const target = [...enemies, ...stallions].find((e) => Phaser.Math.Distance.Between(b.x, b.y, e.x, e.y) < (e.getData('tank') ? 65 : 40))
         ?? guys.find((g) => g.getData('hp') > 0 && Phaser.Math.Distance.Between(b.x, b.y, g.x, g.y) < 20);
       if (!target) continue;
       if (guys.includes(target)) this.killGuy(target);
@@ -478,7 +478,7 @@ class Game extends Phaser.Scene {
     for (const m of metal) {
       move(m);
       if (outside(m)) m.destroy();
-      else if (near(m, 30)) { this.boom(m.x, m.y); m.destroy(); this.hurt(m.getData('dmg')); }
+      else if (near(m, 30)) { this.hurt(m.getData('dmg')); this.boom(m.x, m.y); m.destroy(); } // read data before destroy() clears it
     }
 
     for (const e of [...enemies, ...stallions]) {
